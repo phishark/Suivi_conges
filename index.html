@@ -314,6 +314,19 @@ footer{text-align:center;color:var(--ink-muted);font-size:.75rem;margin-top:34px
       <button class="btn primary" id="btnSaveCfg">Enregistrer</button>
       <button class="btn" id="btnResetSeed">↺ Recharger les données d'origine</button>
     </div>
+
+    <h4 class="panel-subhead">Vacances scolaires</h4>
+    <div class="hint">
+      Le calendrier utilise par défaut les dates de la zone B intégrées à l'application. Vous pouvez les remplacer par un fichier JSON personnalisé (autre zone, ou dates mises à jour) — soit un tableau de périodes, soit un objet <code>{zone, periods}</code>. Ce choix est enregistré avec le reste de votre configuration : il se synchronise donc automatiquement sur vos autres appareils si Supabase est configuré, et il est inclus dans l'export/import JSON. Exemple :
+      <br><code style="font-family:var(--font-mono);font-size:.72rem;">[{"start":"2026-10-17","end":"2026-11-02","label":"Vac. Toussaint"}, …]</code>
+    </div>
+    <div id="schoolHolInfo" class="hint" style="margin-top:-4px;"></div>
+    <div class="actions">
+      <button class="btn" id="btnImportSchoolHol">⤒ Importer un JSON</button>
+      <button class="btn" id="btnExportSchoolHol">⤓ Télécharger le modèle actuel</button>
+      <button class="btn" id="btnResetSchoolHol">↺ Revenir à la zone B intégrée</button>
+      <input type="file" id="fileImportSchoolHol" accept="application/json,.json" style="display:none;">
+    </div>
   </div>
 
   <div class="panel" id="supabasePanel">
@@ -495,7 +508,8 @@ function loadCfg(){
     casCarryStart: SEED_CAS_CARRY,
     defaultAlloc: DEFAULT_ALLOC,
     years: JSON.parse(JSON.stringify(SEED_YEARS)),
-    enabledCats: {cas:true, rtt1:true, rtt2:true}
+    enabledCats: {cas:true, rtt1:true, rtt2:true},
+    schoolHolidays: null
   };
   if(!raw){
     localStorage.setItem(LS_CFG, JSON.stringify(base));
@@ -711,9 +725,18 @@ var SCHOOL_HOLIDAYS_B = [
   {start:"2027-02-20", end:"2027-03-08", label:"Vac. Hiver"},
   {start:"2027-04-17", end:"2027-05-03", label:"Vac. Printemps"}
 ];
+/* ---------- vacances scolaires : override JSON (paramètres, synchronisé via cfg) ---------- */
+function activeSchoolHolidays(){
+  return (cfg.schoolHolidays && Array.isArray(cfg.schoolHolidays.periods) && cfg.schoolHolidays.periods.length) ? cfg.schoolHolidays.periods : SCHOOL_HOLIDAYS_B;
+}
+function activeSchoolZoneLabel(){
+  return (cfg.schoolHolidays && cfg.schoolHolidays.zone) ? cfg.schoolHolidays.zone : "B";
+}
+
 function isSchoolHolidayB(key){
-  for(var i=0;i<SCHOOL_HOLIDAYS_B.length;i++){
-    var p = SCHOOL_HOLIDAYS_B[i];
+  var list = activeSchoolHolidays();
+  for(var i=0;i<list.length;i++){
+    var p = list[i];
     if(key>=p.start && key<=p.end) return p.label;
   }
   return null;
@@ -914,7 +937,7 @@ function renderMonth(year,m){
     var pmStyle = pmColor ? "background:"+pmColor+";" : "";
     var amTag = amCode ? '<span class="tag">'+CATS[amCode].label+'</span>' : '';
     var pmTag = pmCode ? '<span class="tag">'+CATS[pmCode].label+'</span>' : '';
-    var titleTxt = isHoliday || (schoolHol ? schoolHol+" (zone B)" : key);
+    var titleTxt = isHoliday || (schoolHol ? schoolHol+" (zone "+activeSchoolZoneLabel()+")" : key);
     s += '<td><div class="'+cls+'" data-date="'+key+'" title="'+titleTxt+'">'
       + '<span class="num">'+d+'</span>'
       + '<div class="halves">'
@@ -939,7 +962,7 @@ function renderLegend(){
   }
   s += '<div class="it"><span class="sw" style="background:var(--weekend)"></span>Week-end</div>';
   s += '<div class="it"><span class="sw" style="background:var(--holiday)"></span>Jour férié</div>';
-  s += '<div class="it"><span class="sw" style="background:transparent;border:2px solid var(--school-holiday)"></span>Vacances scolaires (zone B)</div>';
+  s += '<div class="it"><span class="sw" style="background:transparent;border:2px solid var(--school-holiday)"></span>Vacances scolaires (zone '+activeSchoolZoneLabel()+')</div>';
   legendEl.innerHTML = s;
 }
 
@@ -1166,6 +1189,19 @@ function fillSettings(){
   var casOverridden = yCfg && yCfg.casReportOverride !== undefined && yCfg.casReportOverride !== null && yCfg.casReportOverride !== "";
   document.getElementById('cfgCasCarry').value = casReportForYear(fy);
   document.getElementById('casReportAutoTag').textContent = casOverridden ? '· corrigé manuellement' : '· auto';
+
+  fillSchoolHolInfo();
+}
+function fillSchoolHolInfo(){
+  var el = document.getElementById('schoolHolInfo');
+  if(!el) return;
+  var sh = cfg.schoolHolidays;
+  if(sh && Array.isArray(sh.periods) && sh.periods.length){
+    var zoneTxt = sh.zone ? ' — zone '+sh.zone : '';
+    el.textContent = 'Source active : fichier importé' + zoneTxt + ' (' + sh.periods.length + ' périodes). Synchronisé avec vos autres appareils (Supabase / export-import).';
+  }else{
+    el.textContent = 'Source active : zone B intégrée (' + SCHOOL_HOLIDAYS_B.length + ' périodes, 2020–2027).';
+  }
 }
 document.getElementById('btnSaveCfg').addEventListener('click', function(){
   var fy = fiscalStartYearFor(currentYear);
@@ -1208,6 +1244,55 @@ document.getElementById('btnResetSeed').addEventListener('click', function(){
     defaultAlloc: DEFAULT_ALLOC, years: JSON.parse(JSON.stringify(SEED_YEARS))
   };
   saveDays(days); saveCfg(cfg);
+  renderAll();
+});
+
+/* ---------- import/export des vacances scolaires (JSON) ---------- */
+document.getElementById('btnImportSchoolHol').addEventListener('click', function(){
+  document.getElementById('fileImportSchoolHol').click();
+});
+document.getElementById('fileImportSchoolHol').addEventListener('change', function(e){
+  var file = e.target.files[0];
+  if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(evt){
+    try{
+      var data = JSON.parse(evt.target.result);
+      var periods = Array.isArray(data) ? data : (data && Array.isArray(data.periods) ? data.periods : null);
+      if(!periods || !periods.length) throw new Error("format");
+      var clean = [];
+      for(var i=0;i<periods.length;i++){
+        var p = periods[i];
+        if(!p || typeof p.start!=='string' || typeof p.end!=='string' || typeof p.label!=='string') throw new Error("format");
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(p.start) || !/^\d{4}-\d{2}-\d{2}$/.test(p.end)) throw new Error("format");
+        clean.push({start:p.start, end:p.end, label:p.label});
+      }
+      cfg.schoolHolidays = {zone: (data && !Array.isArray(data) && data.zone) ? String(data.zone) : null, periods: clean};
+      saveCfg(cfg);
+      fillSchoolHolInfo();
+      renderAll();
+      alert("Vacances scolaires importées (" + clean.length + " périodes). Elles seront synchronisées via Supabase (si configuré) ou via export/import JSON.");
+    }catch(err){
+      alert("Fichier invalide. Attendu : un tableau [{start, end, label}, …] ou un objet {zone, periods:[…]}.");
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+document.getElementById('btnExportSchoolHol').addEventListener('click', function(){
+  var payload = {zone: activeSchoolZoneLabel(), periods: activeSchoolHolidays()};
+  var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'vacances_scolaires.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+document.getElementById('btnResetSchoolHol').addEventListener('click', function(){
+  if(!confirm("Revenir aux dates de la zone B intégrées à l'application ?")) return;
+  cfg.schoolHolidays = null;
+  saveCfg(cfg);
+  fillSchoolHolInfo();
   renderAll();
 });
 
